@@ -38,6 +38,9 @@ gem 'simplecov', :require => false, :group => :test
 
 group :production do
   gem 'unicorn', '~> 4.8.2'
-  gem 'mysql2', '~> 0.3.15'
+  gem 'mysql2', '~> 0.4.10'
 end
 
+gem "guard", "~> 2.14"
+
+gem "guard-rspec", "~> 4.3"

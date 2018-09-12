@@ -20,6 +20,7 @@ class ApplicantsController < ApplicationController
   before_filter :require_admin, :only => [:destroy, :new, :create, :hire, :make_decision, :unassigned, :assign_craftsman]
 
   def index
+    @crafters      = Footprints::Repository.craftsman
     @applicants    = Footprints::ApplicantFinder.new.get_applicants(params).paginate(:page => params[:page], :per_page => 12)
     @presenter     = ApplicantIndexPresenter.new(@applicants)
   end
@@ -83,6 +84,11 @@ class ApplicantsController < ApplicationController
     redirect_to path_for_redirect, :notice => "Successfully denied and archived applicant"
   end
 
+  def update_end_date
+    @applicant = repo.applicant.find(params[:id])
+    params[:applicant][:end_date] = params[:end_date]
+  end
+
   def update_employment_dates
     @applicant = repo.applicant.find(params[:id])
     end_date = calculate_end_date(params[:applicant][:start_date], params[:applicant][:duration])
@@ -106,8 +112,21 @@ class ApplicantsController < ApplicationController
 
   def make_decision
     applicant = repo.applicant.find(params[:id])
+    apprentice = repo.apprentice.new
     ApplicantInteractor.new(applicant, hiring_decision_params, session[:id_token]).update_applicant_for_hiring
-    redirect_to applicant_path(applicant), :flash => { :notice => "Applicant hired" }
+
+    apprentice.name = applicant.name
+    apprentice.email = applicant.email
+    apprentice.location = applicant.location
+    apprentice.position = applicant.discipline
+    apprentice.mentor = applicant.mentor
+    apprentice.start_date = applicant.start_date
+    apprentice.end_date = applicant.end_date
+    apprentice.save!
+
+    applicant.destroy
+
+    redirect_to apprentices_path, :flash => { :notice => "Applicant hired" }
   rescue StandardError => e
     flash[:error] = [e.message]
     redirect_to applicant_path(applicant)
@@ -127,13 +146,35 @@ class ApplicantsController < ApplicationController
     @applicant_presenter = ApplicantPresenter.new
     applicants = repo.applicant.get_unassigned_unarchived_applicants
     @applicants = @applicant_presenter.sort_by_date(applicants)
+    @craftsmen = Footprints::Repository.craftsman.all
   end
 
   def assign_craftsman
-    applicant = repo.applicant.find_by_id(params[:id])
+    applicant_id = params[:applicant_to_assign]["id"]
+    chosen_crafter = params[:applicant_to_assign]["chosen_crafter"]
+    applicant = repo.applicant.find_by_id(applicant_id)
     steward = repo.craftsman.find_by_email(ENV['STEWARD'])
-    ApplicantDispatch::Dispatcher.new(applicant, steward).assign_applicant
+
+    if automatically_assigned?
+      ApplicantDispatch::Dispatcher.new(applicant, steward).assign_applicant
+    else
+      ApplicantDispatch::Dispatcher.new(applicant, steward).assign_applicant_specific(chosen_crafter)
+    end
     redirect_to(unassigned_applicants_path, notice: "Assigned #{applicant.name} to #{applicant.assigned_craftsman}")
+  end
+
+  def assign_craftsman_from_applicant
+    applicant_id = params[:applicant_to_assign]["id"]
+    chosen_crafter = params[:applicant_to_assign]["chosen_crafter"]
+    applicant = repo.applicant.find_by_id(applicant_id)
+    steward = repo.craftsman.find_by_email(ENV['STEWARD'])
+
+    if automatically_assigned?
+      ApplicantDispatch::Dispatcher.new(applicant, steward).assign_applicant
+    else
+      ApplicantDispatch::Dispatcher.new(applicant, steward).assign_applicant_specific(chosen_crafter)
+    end
+    redirect_to applicant_path(applicant), notice: "Assigned #{applicant.name} to #{applicant.assigned_craftsman}"
   end
 
   def offer_letter_form
@@ -162,6 +203,10 @@ class ApplicantsController < ApplicationController
   end
 
   private
+
+  def automatically_assigned?
+    params[:applicant_to_assign]["chosen_crafter"] == "auto"
+  end
 
   def render_offer_letter_form(location)
     if location_is_unknown(location)
@@ -220,6 +265,10 @@ class ApplicantsController < ApplicationController
 
   def applicant_params_for_update
     params.require(:applicant).permit(:name, :email, :initial_reply_on, :sent_challenge_on, :completed_challenge_on, :reviewed_on, :resubmitted_challenge_on, :decision_made_on, :assigned_craftsman, :code_submission, :codeschool, :college_degree, :cs_degree, :worked_as_dev, :additional_notes, :url, :craftsman_id, :has_steward, :skill, :discipline, :archived, :hired, :about, :software_interest, :reason, :start_date, :end_date, :location, :offered_on)
+  end
+
+  def apprentice_params
+    params.require(:apprentice).permit(:name, :email, :applied_on, :position, :location, :start_date, :end_date, :mentor)
   end
 
   def determine_redirect_path_for_denial(applicant)
